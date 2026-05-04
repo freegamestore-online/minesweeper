@@ -1,5 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { Shell } from "./components/Shell";
+import { Leaderboard } from "./components/Leaderboard";
+import { useLeaderboard } from "./hooks/useLeaderboard";
 
 type Difficulty = "easy" | "medium" | "hard";
 
@@ -125,6 +127,8 @@ export default function App() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressTriggered = useRef(false);
+  const { topScores, recentScores, submitScore, loading } = useLeaderboard("minesweeper");
+  const submittedRef = useRef(false);
 
   const config = DIFFICULTIES[difficulty];
 
@@ -143,6 +147,17 @@ export default function App() {
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, [timerRunning]);
+
+  // Submit time on win
+  useEffect(() => {
+    if (gameState === "won" && !submittedRef.current) {
+      submittedRef.current = true;
+      submitScore(time);
+    }
+    if (gameState === "playing") {
+      submittedRef.current = false;
+    }
+  }, [gameState, time, submitScore]);
 
   const resetGame = useCallback(
     (diff?: Difficulty) => {
@@ -263,7 +278,16 @@ export default function App() {
   const cellSize = difficulty === "hard" ? "clamp(18px, 4vw, 28px)" : "clamp(24px, 6vw, 36px)";
 
   return (
-    <Shell>
+    <Shell
+      sidebar={
+        <nav className="flex-1 px-4 flex flex-col gap-3 py-4 overflow-auto">
+          <div className="mt-2 border-t" style={{ borderColor: "var(--line)" }}>
+            <div className="text-xs font-semibold px-4 pt-3" style={{ color: "var(--muted)" }}>Leaderboard</div>
+            <Leaderboard topScores={topScores} recentScores={recentScores} loading={loading} />
+          </div>
+        </nav>
+      }
+    >
       <div style={{ maxWidth: "100%", overflowX: "auto" }}>
         {/* Header */}
         <h1

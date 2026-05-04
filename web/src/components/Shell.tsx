@@ -2,9 +2,10 @@ import type { ReactNode } from "react";
 
 interface ShellProps {
   children: ReactNode;
+  sidebar?: ReactNode;
 }
 
-export function Shell({ children }: ShellProps) {
+export function Shell({ children, sidebar }: ShellProps) {
   return (
     <>
       {/* Desktop: sidebar + main */}
@@ -20,9 +21,7 @@ export function Shell({ children }: ShellProps) {
           <div className="p-6 font-bold text-lg" style={{ fontFamily: "Fraunces, serif" }}>
             minesweeper
           </div>
-          <nav className="flex-1 px-4">
-            {/* Add nav items here */}
-          </nav>
+          {sidebar ?? <nav className="flex-1 px-4" />}
           <div className="p-4 text-xs" style={{ color: "var(--muted)" }}>
             <a
               href="https://freegamestore.online"
