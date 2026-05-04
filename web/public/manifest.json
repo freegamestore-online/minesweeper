@@ -1,6 +1,6 @@
 {
-  "name": "APPNAME",
-  "short_name": "APPNAME",
+  "name": "minesweeper",
+  "short_name": "minesweeper",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
