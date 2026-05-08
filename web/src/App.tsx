@@ -305,7 +305,7 @@ export default function App() {
               </ul>
             </div>
           }
-          actions={<><button onClick={() => resetGame()}>New Game</button><GameAuth /></>}
+          actions={<><button className="min-h-[2.75rem] min-w-[2.75rem]" onClick={() => resetGame()}>New Game</button><GameAuth /></>}
         />
       }
     >
@@ -319,6 +319,7 @@ export default function App() {
                 onClick={() => changeDifficulty(d)}
                 style={{
                   padding: "0.4rem 0.8rem",
+                  minHeight: "2.75rem",
                   borderRadius: "6px",
                   border: "1px solid var(--line)",
                   background: difficulty === d ? "var(--accent)" : "var(--panel)",
@@ -349,6 +350,7 @@ export default function App() {
                   onClick={() => resetGame()}
                   style={{
                     padding: "0.4rem 1rem",
+                    minHeight: "2.75rem",
                     borderRadius: "6px",
                     border: "1px solid var(--line)",
                     background: "var(--accent)",
