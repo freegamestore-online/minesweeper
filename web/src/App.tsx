@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { GameShell, GameTopbar } from "@freegamestore/games";
+import { GameShell, GameTopbar, GameAuth } from "@freegamestore/games";
 import { useLeaderboard } from "./hooks/useLeaderboard";
 
 type Difficulty = "easy" | "medium" | "hard";
@@ -288,7 +288,7 @@ export default function App() {
             { label: "Mines", value: config.mines - flagCount },
             { label: "Time", value: `${time}s` },
           ]}
-          actions={<button onClick={() => resetGame()}>New Game</button>}
+          actions={<><button onClick={() => resetGame()}>New Game</button><GameAuth /></>}
         />
       }
     >
