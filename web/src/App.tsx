@@ -1,6 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { Shell } from "./components/Shell";
-import { Leaderboard } from "./components/Leaderboard";
+import { GameShell, GameTopbar } from "@freeappstore/games";
 import { useLeaderboard } from "./hooks/useLeaderboard";
 
 type Difficulty = "easy" | "medium" | "hard";
@@ -127,7 +126,7 @@ export default function App() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressTriggered = useRef(false);
-  const { topScores, recentScores, submitScore, loading } = useLeaderboard("minesweeper");
+  const { submitScore } = useLeaderboard("minesweeper");
   const submittedRef = useRef(false);
 
   const config = DIFFICULTIES[difficulty];
@@ -277,174 +276,136 @@ export default function App() {
 
   const cellSize = difficulty === "hard" ? "clamp(18px, 4vw, 28px)" : "clamp(24px, 6vw, 36px)";
 
+  const statusLabel =
+    gameState === "won" ? "You Win!" : gameState === "lost" ? "Game Over" : "";
+
   return (
-    <Shell
-      sidebar={
-        <nav className="flex-1 px-4 flex flex-col gap-3 py-4 overflow-auto">
-          <div className="mt-2 border-t" style={{ borderColor: "var(--line)" }}>
-            <div className="text-xs font-semibold px-4 pt-3" style={{ color: "var(--muted)" }}>Leaderboard</div>
-            <Leaderboard topScores={topScores} recentScores={recentScores} loading={loading} />
-          </div>
-        </nav>
+    <GameShell
+      topbar={
+        <GameTopbar
+          title="Minesweeper"
+          stats={[
+            { label: "Mines", value: config.mines - flagCount },
+            { label: "Time", value: `${time}s` },
+          ]}
+          actions={<button onClick={() => resetGame()}>New Game</button>}
+        />
       }
     >
-      <div style={{ maxWidth: "100%", overflowX: "auto" }}>
-        {/* Header */}
-        <h1
-          className="display-font"
-          style={{
-            fontSize: "1.75rem",
-            fontWeight: 700,
-            marginBottom: "1rem",
-            color: "var(--ink)",
-          }}
-        >
-          Minesweeper
-        </h1>
-
-        {/* Difficulty Selector */}
-        <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem", flexWrap: "wrap" }}>
-          {(["easy", "medium", "hard"] as Difficulty[]).map((d) => (
-            <button
-              key={d}
-              onClick={() => changeDifficulty(d)}
-              style={{
-                padding: "0.4rem 0.8rem",
-                borderRadius: "6px",
-                border: "1px solid var(--line)",
-                background: difficulty === d ? "var(--accent)" : "var(--panel)",
-                color: difficulty === d ? "#fff" : "var(--ink)",
-                cursor: "pointer",
-                fontWeight: difficulty === d ? 600 : 400,
-                textTransform: "capitalize",
-              }}
-            >
-              {d}
-            </button>
-          ))}
-        </div>
-
-        {/* Status Bar */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginBottom: "0.75rem",
-            padding: "0.5rem 0.75rem",
-            background: "var(--panel)",
-            borderRadius: "8px",
-            border: "1px solid var(--line)",
-          }}
-        >
-          <span style={{ fontVariantNumeric: "tabular-nums", color: "var(--ink)" }}>
-            Mines: {config.mines - flagCount}
-          </span>
-          <span>
-            {gameState === "won" && (
-              <span style={{ color: "var(--success)", fontWeight: 600 }}>You Win!</span>
-            )}
-            {gameState === "lost" && (
-              <span style={{ color: "var(--error)", fontWeight: 600 }}>Game Over</span>
-            )}
-            {gameState === "playing" && (
+      <div className="relative w-full h-full" style={{ overflowY: "auto" }}>
+        <div style={{ maxWidth: "100%", padding: "0.75rem" }}>
+          {/* Difficulty Selector */}
+          <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem", flexWrap: "wrap" }}>
+            {(["easy", "medium", "hard"] as Difficulty[]).map((d) => (
               <button
-                onClick={() => resetGame()}
+                key={d}
+                onClick={() => changeDifficulty(d)}
                 style={{
-                  background: "none",
-                  border: "none",
+                  padding: "0.4rem 0.8rem",
+                  borderRadius: "6px",
+                  border: "1px solid var(--line)",
+                  background: difficulty === d ? "var(--accent)" : "var(--panel)",
+                  color: difficulty === d ? "#fff" : "var(--ink)",
                   cursor: "pointer",
-                  fontSize: "1.25rem",
+                  fontWeight: difficulty === d ? 600 : 400,
+                  textTransform: "capitalize",
                 }}
               >
-                New Game
+                {d}
               </button>
-            )}
-          </span>
-          <span style={{ fontVariantNumeric: "tabular-nums", color: "var(--ink)" }}>
-            Time: {time}s
-          </span>
-        </div>
-
-        {/* Reset button when game is over */}
-        {gameState !== "playing" && (
-          <div style={{ textAlign: "center", marginBottom: "0.75rem" }}>
-            <button
-              onClick={() => resetGame()}
-              style={{
-                padding: "0.4rem 1rem",
-                borderRadius: "6px",
-                border: "1px solid var(--line)",
-                background: "var(--accent)",
-                color: "#fff",
-                cursor: "pointer",
-                fontWeight: 600,
-              }}
-            >
-              Play Again
-            </button>
+            ))}
           </div>
-        )}
 
-        {/* Grid */}
-        <div
-          style={{
-            display: "inline-grid",
-            gridTemplateColumns: `repeat(${config.cols}, ${cellSize})`,
-            gridTemplateRows: `repeat(${config.rows}, ${cellSize})`,
-            gap: "1px",
-            background: "var(--line)",
-            border: "2px solid var(--line)",
-            borderRadius: "4px",
-            userSelect: "none",
-            touchAction: "manipulation",
-          }}
-        >
-          {grid.map((row, r) =>
-            row.map((cell, c) => (
-              <div
-                key={`${r}-${c}`}
-                onClick={() => {
-                  if (!cell.flagged) handleReveal(r, c);
-                }}
-                onContextMenu={(e) => handleContextMenu(e, r, c)}
-                onTouchStart={(e) => {
-                  e.preventDefault();
-                  handleTouchStart(r, c);
-                }}
-                onTouchEnd={(e) => {
-                  e.preventDefault();
-                  handleTouchEnd(r, c);
-                }}
-                onTouchMove={handleTouchMove}
+          {/* Status + Reset */}
+          {statusLabel && (
+            <div style={{ textAlign: "center", marginBottom: "0.75rem" }}>
+              <span
                 style={{
-                  width: cellSize,
-                  height: cellSize,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: difficulty === "hard" ? "clamp(10px, 2.5vw, 14px)" : "clamp(12px, 3vw, 16px)",
-                  fontWeight: 700,
-                  cursor: gameState === "playing" ? "pointer" : "default",
-                  background: cell.revealed
-                    ? cell.mine
-                      ? "var(--error)"
-                      : "var(--panel)"
-                    : "var(--muted)",
-                  color: cell.revealed && !cell.mine
-                    ? NUMBER_COLORS[cell.adjacentMines] || "var(--ink)"
-                    : "var(--ink)",
-                  transition: "background 0.1s",
+                  fontWeight: 600,
+                  color: gameState === "won" ? "var(--success)" : "var(--error)",
                 }}
               >
-                {cell.revealed && cell.mine && "X"}
-                {cell.revealed && !cell.mine && cell.adjacentMines > 0 && cell.adjacentMines}
-                {!cell.revealed && cell.flagged && "F"}
+                {statusLabel}
+              </span>
+              <div style={{ marginTop: "0.5rem" }}>
+                <button
+                  onClick={() => resetGame()}
+                  style={{
+                    padding: "0.4rem 1rem",
+                    borderRadius: "6px",
+                    border: "1px solid var(--line)",
+                    background: "var(--accent)",
+                    color: "#fff",
+                    cursor: "pointer",
+                    fontWeight: 600,
+                  }}
+                >
+                  Play Again
+                </button>
               </div>
-            ))
+            </div>
           )}
+
+          {/* Grid */}
+          <div
+            style={{
+              display: "inline-grid",
+              gridTemplateColumns: `repeat(${config.cols}, ${cellSize})`,
+              gridTemplateRows: `repeat(${config.rows}, ${cellSize})`,
+              gap: "1px",
+              background: "var(--line)",
+              border: "2px solid var(--line)",
+              borderRadius: "4px",
+              userSelect: "none",
+              touchAction: "manipulation",
+            }}
+          >
+            {grid.map((row, r) =>
+              row.map((cell, c) => (
+                <div
+                  key={`${r}-${c}`}
+                  onClick={() => {
+                    if (!cell.flagged) handleReveal(r, c);
+                  }}
+                  onContextMenu={(e) => handleContextMenu(e, r, c)}
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    handleTouchStart(r, c);
+                  }}
+                  onTouchEnd={(e) => {
+                    e.preventDefault();
+                    handleTouchEnd(r, c);
+                  }}
+                  onTouchMove={handleTouchMove}
+                  style={{
+                    width: cellSize,
+                    height: cellSize,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: difficulty === "hard" ? "clamp(10px, 2.5vw, 14px)" : "clamp(12px, 3vw, 16px)",
+                    fontWeight: 700,
+                    cursor: gameState === "playing" ? "pointer" : "default",
+                    background: cell.revealed
+                      ? cell.mine
+                        ? "var(--error)"
+                        : "var(--panel)"
+                      : "var(--muted)",
+                    color: cell.revealed && !cell.mine
+                      ? NUMBER_COLORS[cell.adjacentMines] || "var(--ink)"
+                      : "var(--ink)",
+                    transition: "background 0.1s",
+                  }}
+                >
+                  {cell.revealed && cell.mine && "X"}
+                  {cell.revealed && !cell.mine && cell.adjacentMines > 0 && cell.adjacentMines}
+                  {!cell.revealed && cell.flagged && "F"}
+                </div>
+              ))
+            )}
+          </div>
         </div>
       </div>
-    </Shell>
+    </GameShell>
   );
 }
