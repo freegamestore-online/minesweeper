@@ -305,7 +305,7 @@ export default function App() {
               </ul>
             </div>
           }
-          actions={<><button className="min-h-[2.75rem] min-w-[2.75rem]" onClick={() => resetGame()}>New Game</button><GameAuth /></>}
+          actions={<GameAuth />}
         />
       }
     >
