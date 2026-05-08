@@ -288,6 +288,23 @@ export default function App() {
             { label: "Mines", value: config.mines - flagCount },
             { label: "Time", value: `${time}s` },
           ]}
+          rules={
+            <div>
+              <h3 style={{marginBottom:'0.5rem',fontWeight:700}}>Minesweeper</h3>
+              <p>Clear the board without hitting a mine.</p>
+              <h4 style={{marginTop:'0.75rem',fontWeight:600}}>Controls</h4>
+              <ul style={{paddingLeft:'1.2rem',marginTop:'0.25rem'}}>
+                <li>Left click to reveal a cell</li>
+                <li>Right click or long press to flag</li>
+              </ul>
+              <h4 style={{marginTop:'0.75rem',fontWeight:600}}>Rules</h4>
+              <ul style={{paddingLeft:'1.2rem',marginTop:'0.25rem'}}>
+                <li>Numbers show adjacent mines</li>
+                <li>Reveal all non-mine cells to win</li>
+                <li>Three difficulties: Easy, Medium, Hard</li>
+              </ul>
+            </div>
+          }
           actions={<><button onClick={() => resetGame()}>New Game</button><GameAuth /></>}
         />
       }
