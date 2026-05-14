@@ -1,23 +1,12 @@
 # Minesweeper
 
-## Platform: FreeGameStore
-- Domain: minesweeper.freegamestore.online
-- Push to `main` auto-deploys via CF Pages
-- SDK: `@freegamestore/games` (GameShell, GameTopbar, GameAuth, useGameSounds)
+A free game on FreeGameStore.
 
-## Development
-- `pnpm dev` — start dev server
-- `pnpm build` — production build
+- Subdomain: `minesweeper.freegamestore.online`
+- Dev: `pnpm install && pnpm dev`
+- Build: `pnpm build`
+- Deploy: `git push origin main` (auto-deploys via Cloudflare Pages)
 
-## Rules
-- No splash screens — game field visible immediately
-- No custom topbar/navbar — use SDK GameTopbar
-- No CSS libraries (MUI, Bootstrap, etc.) — Tailwind only
-- No analytics, tracking, or third-party scripts
-- Muted by default — use `useSound()` to check
-- All touch targets >= 44px
-- Must fit all viewports 320x568 to 1366x1024
-
-## Docs
-- Full guide: https://raw.githubusercontent.com/freeappstore-online/freeappstore/main/SKILLS.md
-- Store: ~/dev/fgs/freegamestore/
+Free, MIT-licensed, no tracking. For platform conventions, read
+https://raw.githubusercontent.com/freeappstore-online/freeappstore/main/SKILLS.md
+before writing or changing anything.
