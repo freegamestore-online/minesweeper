@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { GameShell, GameTopbar, GameAuth } from "@freegamestore/games";
-import { useLeaderboard } from "./hooks/useLeaderboard";
+import { useLeaderboard } from '@freegamestore/games';
 
 type Difficulty = "easy" | "medium" | "hard";
 

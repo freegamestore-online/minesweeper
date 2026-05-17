@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { LeaderboardEntry } from "../hooks/useLeaderboard";
+import type { LeaderboardEntry } from '@freegamestore/games';
 
 interface LeaderboardProps {
   topScores: LeaderboardEntry[];
