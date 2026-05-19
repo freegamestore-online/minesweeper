@@ -1,6 +1,14 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { GameShell, GameTopbar, GameAuth } from "@freegamestore/games";
+import { GameShell, GameTopbar, GameAuth, useGameSounds } from "@freegamestore/games";
 import { useLeaderboard } from '@freegamestore/games';
+
+type SoundsApi = ReturnType<typeof useGameSounds>;
+
+function AudioBridge({ apiRef }: { apiRef: React.MutableRefObject<SoundsApi | null> }) {
+  const sounds = useGameSounds();
+  apiRef.current = sounds;
+  return null;
+}
 
 type Difficulty = "easy" | "medium" | "hard";
 
@@ -128,6 +136,7 @@ export default function App() {
   const longPressTriggered = useRef(false);
   const { submitScore } = useLeaderboard("minesweeper");
   const submittedRef = useRef(false);
+  const audioRef = useRef<SoundsApi | null>(null);
 
   const config = DIFFICULTIES[difficulty];
 
@@ -205,14 +214,17 @@ export default function App() {
         setGrid(lostGrid);
         setGameState("lost");
         setTimerRunning(false);
+        audioRef.current?.playError();
         return;
       }
 
+      audioRef.current?.playTick();
       const newGrid = revealCell(currentGrid, config.rows, config.cols, row, col);
       setGrid(newGrid);
       if (checkWin(newGrid)) {
         setGameState("won");
         setTimerRunning(false);
+        audioRef.current?.playLevelUp();
       }
     },
     [grid, gameState, firstClick, config, checkWin]
@@ -226,6 +238,7 @@ export default function App() {
       const newGrid = grid.map((r) => r.map((c) => ({ ...c })));
       newGrid[row][col].flagged = !newGrid[row][col].flagged;
       setGrid(newGrid);
+      audioRef.current?.playMove();
     },
     [grid, gameState]
   );
@@ -309,6 +322,7 @@ export default function App() {
         />
       }
     >
+      <AudioBridge apiRef={audioRef} />
       <div className="relative w-full h-full" style={{ overflowY: "auto" }}>
         <div style={{ maxWidth: "100%", padding: "0.75rem" }}>
           {/* Difficulty Selector */}
