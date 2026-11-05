@@ -132,9 +132,14 @@ export function winGrid(grid: Grid): Grid {
 export const MIN_CELL_PX = 22;
 export const MAX_CELL_PX = 40;
 
-/** The largest whole-pixel cell that fits, allowing for the 1px gaps, the 2px border and 8px of padding on each side. */
+/** Space kept clear around the board inside its scrolling area. */
+export const BOARD_PADDING_PX = 4;
+/** The board's border width. */
+export const BOARD_BORDER_PX = 2;
+
+/** The largest whole-pixel cell that fits, allowing for the 1px gaps, the border and the padding on each side. */
 function rawFit(width: number, height: number, rows: number, cols: number): number {
-  const chrome = 2 * 2 + 2 * 8;
+  const chrome = 2 * BOARD_BORDER_PX + 2 * BOARD_PADDING_PX;
   return Math.floor(Math.min((width - chrome - (cols - 1)) / cols, (height - chrome - (rows - 1)) / rows));
 }
 

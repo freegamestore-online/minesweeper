@@ -3,6 +3,8 @@ import {
   DIFFICULTIES,
   MAX_CELL_PX,
   MIN_CELL_PX,
+  BOARD_BORDER_PX,
+  BOARD_PADDING_PX,
   boardLayout,
   chord,
   createEmptyGrid,
@@ -124,6 +126,14 @@ describe("boardLayout", () => {
     expect(transpose).toBe(true);
     expect(cellPx * 16 + 15 + 20).toBeLessThanOrEqual(390);
     expect(cellPx * 30 + 29 + 20).toBeLessThanOrEqual(728);
+  });
+
+  it("fits Hard in the 390x708 board area of a 390x844 phone, with no 1px overflow", () => {
+    const { cellPx, transpose } = boardLayout(390, 708, 16, 30);
+    expect(transpose).toBe(true);
+    const chrome = 2 * BOARD_BORDER_PX + 2 * BOARD_PADDING_PX;
+    expect(cellPx * 16 + 15 + chrome).toBeLessThanOrEqual(390);
+    expect(cellPx * 30 + 29 + chrome).toBeLessThanOrEqual(708);
   });
 
   it("keeps Hard the right way up on a wide screen", () => {

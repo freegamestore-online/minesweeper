@@ -2,6 +2,8 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { GameShell, GameTopbar, GameAuth, useGameSounds } from "@freegamestore/games";
 import { useLeaderboard } from '@freegamestore/games';
 import {
+  BOARD_BORDER_PX,
+  BOARD_PADDING_PX,
   DIFFICULTIES,
   boardLayout,
   chord,
@@ -18,6 +20,7 @@ import {
 } from "./lib/board";
 import { dailyLeaderboardId, leaderboardId, timeScore } from "./lib/score";
 import { dailyGrid, dateKey } from "./lib/daily";
+import { readStore, writeStore } from "./lib/storage";
 import {
   STATS_KEY,
   dailyResult,
@@ -57,6 +60,14 @@ const NUMBER_COLORS: Record<number, string> = {
 const TAP_SLOP_PX = 10;
 const LONG_PRESS_MS = 450;
 
+/** Arrow keys move the keyboard focus by one cell on the board as drawn. */
+const ARROWS: Record<string, [number, number]> = {
+  ArrowUp: [-1, 0],
+  ArrowDown: [1, 0],
+  ArrowLeft: [0, -1],
+  ArrowRight: [0, 1],
+};
+
 /** What a cell shows, and how a screen reader names it. */
 function cellFace(cell: Cell, lost: boolean): { text: string; label: string } {
   if (cell.exploded) return { text: "💥", label: "Exploded mine" };
@@ -88,7 +99,7 @@ export default function App() {
   const [started, setStarted] = useState(false);
   /** The UTC date of the daily board being played, or null for a random board. Captured at start, so midnight doesn't change it. */
   const [daily, setDaily] = useState<string | null>(null);
-  const [stats, setStats] = useState(() => loadStats(localStorage.getItem(STATS_KEY)));
+  const [stats, setStats] = useState(() => loadStats(readStore(STATS_KEY)));
   const [newBest, setNewBest] = useState(false);
   const [time, setTime] = useState(0);
   const [timerRunning, setTimerRunning] = useState(false);
@@ -96,6 +107,8 @@ export default function App() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const touchRef = useRef<TouchState | null>(null);
   const boardAreaRef = useRef<HTMLDivElement>(null);
+  /** The cell that takes keyboard focus (grid coordinates). Only it is in the tab order. */
+  const [focusCell, setFocusCell] = useState<[number, number]>([0, 0]);
   const { submitScore } = useLeaderboard(leaderboardId(difficulty));
   const { submitScore: submitDailyScore } = useLeaderboard(dailyLeaderboardId(difficulty));
   const submittedRef = useRef(false);
@@ -134,7 +147,7 @@ export default function App() {
   }, [timerRunning]);
 
   useEffect(() => {
-    localStorage.setItem(STATS_KEY, JSON.stringify(stats));
+    writeStore(STATS_KEY, JSON.stringify(stats));
   }, [stats]);
 
   // Record a win and submit its time. Leaderboards rank higher scores first, so the time is inverted.
@@ -169,6 +182,7 @@ export default function App() {
       setNewBest(false);
       setTime(0);
       setTimerRunning(false);
+      setFocusCell([0, 0]);
       if (timerRef.current) clearInterval(timerRef.current);
     },
     [difficulty, daily]
@@ -278,6 +292,26 @@ export default function App() {
     if (state && !state.moved && !state.longPressed) handleReveal(state.row, state.col);
   };
 
+  /** Arrows move between cells; Enter or Space reveals (or chords), F flags. */
+  const handleCellKey = (e: React.KeyboardEvent, row: number, col: number) => {
+    const step = ARROWS[e.key];
+    if (step) {
+      e.preventDefault();
+      // Move on the board as drawn, which is turned when `transpose` is set.
+      const [dr, dc] = transpose ? [step[1], step[0]] : step;
+      const r = Math.min(config.rows - 1, Math.max(0, row + dr));
+      const c = Math.min(config.cols - 1, Math.max(0, col + dc));
+      setFocusCell([r, c]);
+      boardAreaRef.current?.querySelector<HTMLElement>(`[data-testid="cell-${r}-${c}"]`)?.focus();
+    } else if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      handleReveal(row, col);
+    } else if (e.key === "f" || e.key === "F") {
+      e.preventDefault();
+      handleFlag(row, col);
+    }
+  };
+
   const changeDifficulty = (d: Difficulty) => {
     setDifficulty(d);
     resetGame(d);
@@ -311,6 +345,7 @@ export default function App() {
                 <li>Right click or long press to flag</li>
                 <li>Tap a number with all its mines flagged to open its other neighbours</li>
                 <li>Drag to move around a large board</li>
+                <li>Keyboard: Tab to the board, arrow keys to move, Enter or Space to reveal, F to flag</li>
               </ul>
               <h4 style={{marginTop:'0.75rem',fontWeight:600}}>Rules</h4>
               <ul style={{paddingLeft:'1.2rem',marginTop:'0.25rem'}}>
@@ -391,7 +426,7 @@ export default function App() {
           className="flex-1 min-h-0 overflow-auto"
           style={{ touchAction: "pan-x pan-y" }}
         >
-          <div className="flex w-max min-w-full min-h-full p-2">
+          <div className="flex w-max min-w-full min-h-full" style={{ padding: BOARD_PADDING_PX }}>
             <div
               role="grid"
               aria-label={`${viewRows} by ${viewCols} minefield`}
@@ -402,12 +437,13 @@ export default function App() {
                 gridTemplateRows: `repeat(${viewRows}, ${cellPx}px)`,
                 gap: "1px",
                 background: "var(--line)",
-                border: "2px solid var(--line)",
+                border: `${BOARD_BORDER_PX}px solid var(--line)`,
                 borderRadius: "4px",
               }}
             >
-              {Array.from({ length: viewRows }, (_, vr) =>
-                Array.from({ length: viewCols }, (_, vc) => {
+              {Array.from({ length: viewRows }, (_, vr) => (
+                <div key={vr} role="row" style={{ display: "contents" }}>
+                {Array.from({ length: viewCols }, (_, vc) => {
                   const r = transpose ? vc : vr;
                   const c = transpose ? vr : vc;
                   const cell = grid[r][c];
@@ -418,6 +454,9 @@ export default function App() {
                       role="gridcell"
                       aria-label={face.label}
                       data-testid={`cell-${r}-${c}`}
+                      tabIndex={r === focusCell[0] && c === focusCell[1] ? 0 : -1}
+                      onFocus={() => setFocusCell([r, c])}
+                      onKeyDown={(e) => handleCellKey(e, r, c)}
                       onClick={() => handleReveal(r, c)}
                       onContextMenu={(e) => handleContextMenu(e, r, c)}
                       onTouchStart={(e) => handleTouchStart(e, r, c)}
@@ -446,8 +485,9 @@ export default function App() {
                       {face.text}
                     </div>
                   );
-                })
-              )}
+                })}
+                </div>
+              ))}
             </div>
           </div>
         </div>

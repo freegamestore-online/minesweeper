@@ -163,3 +163,58 @@ describe("chording in the app", () => {
     throw new Error("no chordable number on this daily board");
   });
 });
+
+describe("keyboard play", () => {
+  it("has one cell in the tab order and moves focus with the arrow keys", () => {
+    render(<App />);
+    const tabbable = screen.getAllByRole("gridcell").filter((el) => el.tabIndex === 0);
+    expect(tabbable).toEqual([cell(0, 0)]);
+    cell(0, 0).focus();
+    fireEvent.keyDown(cell(0, 0), { key: "ArrowRight" });
+    fireEvent.keyDown(cell(0, 1), { key: "ArrowDown" });
+    expect(document.activeElement).toBe(cell(1, 1));
+    expect(cell(1, 1).tabIndex).toBe(0);
+    expect(cell(0, 0).tabIndex).toBe(-1);
+    // The edge stops the focus.
+    fireEvent.keyDown(cell(1, 1), { key: "ArrowUp" });
+    fireEvent.keyDown(cell(0, 1), { key: "ArrowUp" });
+    expect(document.activeElement).toBe(cell(0, 1));
+  });
+
+  it("flags with F and reveals with Enter or Space", () => {
+    render(<App />);
+    fireEvent.keyDown(cell(0, 0), { key: "f" });
+    expect(cell(0, 0)).toHaveAttribute("aria-label", "Flag");
+    fireEvent.keyDown(cell(0, 0), { key: "F" });
+    expect(cell(0, 0)).toHaveAttribute("aria-label", "Hidden");
+    fireEvent.keyDown(cell(4, 4), { key: " " });
+    expect(cell(4, 4)).not.toHaveAttribute("aria-label", "Hidden");
+  });
+
+  it("reveals with Enter", () => {
+    render(<App />);
+    fireEvent.keyDown(cell(4, 4), { key: "Enter" });
+    expect(cell(4, 4)).not.toHaveAttribute("aria-label", "Hidden");
+  });
+
+  it("puts the cells in rows, as a grid needs", () => {
+    render(<App />);
+    const rows = screen.getAllByRole("row");
+    expect(rows).toHaveLength(9);
+    expect(rows[0].querySelectorAll("[role=gridcell]")).toHaveLength(9);
+  });
+});
+
+describe("storage", () => {
+  it("still plays when localStorage is blocked", () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new DOMException("blocked", "SecurityError");
+    });
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("blocked", "SecurityError");
+    });
+    render(<App />);
+    fireEvent.click(cell(4, 4));
+    expect(cell(4, 4)).not.toHaveAttribute("aria-label", "Hidden");
+  });
+});
