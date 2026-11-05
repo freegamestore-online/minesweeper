@@ -123,6 +123,15 @@ export function lossGrid(grid: Grid): Grid {
   );
 }
 
+/** Put a flag on a hidden cell, or take it off. */
+export function toggleFlag(grid: Grid, row: number, col: number): Grid {
+  return grid.map((cells, r) => cells.map((cell, c) => (r === row && c === col ? { ...cell, flagged: !cell.flagged } : cell)));
+}
+
+export function countFlags(grid: Grid): number {
+  return grid.reduce((n, row) => n + row.filter((cell) => cell.flagged).length, 0);
+}
+
 /** On a win every mine is flagged, so the counter reads zero. */
 export function winGrid(grid: Grid): Grid {
   return grid.map((row) => row.map((cell) => (cell.mine ? { ...cell, flagged: true } : cell)));

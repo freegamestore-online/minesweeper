@@ -1,20 +1,21 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { GameShell, GameTopbar, GameAuth, useGameSounds } from "@freegamestore/games";
 import { useLeaderboard } from '@freegamestore/games';
+import { Board } from "./components/Board";
 import {
-  BOARD_BORDER_PX,
   BOARD_PADDING_PX,
   DIFFICULTIES,
   boardLayout,
   chord,
+  countFlags,
   createEmptyGrid,
   hitMine,
   isWon,
   lossGrid,
   placeMines,
   revealCell,
+  toggleFlag,
   winGrid,
-  type Cell,
   type Difficulty,
   type Grid,
 } from "./lib/board";
@@ -44,50 +45,13 @@ function AudioBridge({ apiRef }: { apiRef: React.MutableRefObject<SoundsApi | nu
 
 type GameState = "playing" | "won" | "lost";
 
-/** Mid-tone number colours that read on both the light and the dark panel. */
-const NUMBER_COLORS: Record<number, string> = {
-  1: "#3b82f6",
-  2: "#16a34a",
-  3: "#ef4444",
-  4: "#8b5cf6",
-  5: "#d97706",
-  6: "#0891b2",
-  7: "var(--ink)",
-  8: "var(--muted)",
-};
-
-/** How far a finger can move before a touch counts as a pan rather than a tap. */
-const TAP_SLOP_PX = 10;
-const LONG_PRESS_MS = 450;
-
-/** Arrow keys move the keyboard focus by one cell on the board as drawn. */
-const ARROWS: Record<string, [number, number]> = {
-  ArrowUp: [-1, 0],
-  ArrowDown: [1, 0],
-  ArrowLeft: [0, -1],
-  ArrowRight: [0, 1],
-};
-
-/** What a cell shows, and how a screen reader names it. */
-function cellFace(cell: Cell, lost: boolean): { text: string; label: string } {
-  if (cell.exploded) return { text: "💥", label: "Exploded mine" };
-  if (lost && cell.flagged && !cell.mine) return { text: "❌", label: "Wrong flag" };
-  if (cell.flagged) return { text: "🚩", label: "Flag" };
-  if (!cell.revealed) return { text: "", label: "Hidden" };
-  if (cell.mine) return { text: "💣", label: "Mine" };
-  if (cell.adjacentMines > 0) return { text: String(cell.adjacentMines), label: `${cell.adjacentMines} adjacent mines` };
-  return { text: "", label: "Empty" };
-}
-
-interface TouchState {
-  row: number;
-  col: number;
-  x: number;
-  y: number;
-  moved: boolean;
-  longPressed: boolean;
-  timer: ReturnType<typeof setTimeout> | null;
-}
+/** A difficulty or Daily button: filled with the accent while selected. */
+const toggleStyle = (on: boolean): React.CSSProperties => ({
+  border: "1px solid var(--line)",
+  background: on ? "var(--accent)" : "var(--panel)",
+  color: on ? "#fff" : "var(--ink)",
+  fontWeight: on ? 600 : 400,
+});
 
 export default function App() {
   const [difficulty, setDifficulty] = useState<Difficulty>("easy");
@@ -105,10 +69,9 @@ export default function App() {
   const [timerRunning, setTimerRunning] = useState(false);
   const [area, setArea] = useState({ width: 0, height: 0 });
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const touchRef = useRef<TouchState | null>(null);
   const boardAreaRef = useRef<HTMLDivElement>(null);
-  /** The cell that takes keyboard focus (grid coordinates). Only it is in the tab order. */
-  const [focusCell, setFocusCell] = useState<[number, number]>([0, 0]);
+  /** Changes for every new game, so the board starts afresh (keyboard focus back on the first cell). */
+  const [gameId, setGameId] = useState(0);
   const { submitScore } = useLeaderboard(leaderboardId(difficulty));
   const { submitScore: submitDailyScore } = useLeaderboard(dailyLeaderboardId(difficulty));
   const submittedRef = useRef(false);
@@ -116,14 +79,7 @@ export default function App() {
 
   const config = DIFFICULTIES[difficulty];
   const { cellPx, transpose } = boardLayout(area.width, area.height, config.rows, config.cols);
-  // A turned board is drawn column by column; play still uses the grid's own coordinates.
-  const viewRows = transpose ? config.cols : config.rows;
-  const viewCols = transpose ? config.rows : config.cols;
-
-  const flagCount = grid.reduce(
-    (acc, row) => acc + row.reduce((a, cell) => a + (cell.flagged ? 1 : 0), 0),
-    0
-  );
+  const flagCount = countFlags(grid);
 
   useEffect(() => {
     const el = boardAreaRef.current;
@@ -182,7 +138,7 @@ export default function App() {
       setNewBest(false);
       setTime(0);
       setTimerRunning(false);
-      setFocusCell([0, 0]);
+      setGameId((id) => id + 1);
       if (timerRef.current) clearInterval(timerRef.current);
     },
     [difficulty, daily]
@@ -234,83 +190,13 @@ export default function App() {
   const handleFlag = useCallback(
     (row: number, col: number) => {
       if (gameState !== "playing") return;
-      const cell = grid[row][col];
-      if (cell.revealed) return;
-      const newGrid = grid.map((r) => r.map((c) => ({ ...c })));
-      newGrid[row][col].flagged = !newGrid[row][col].flagged;
-      setGrid(newGrid);
+      if (grid[row][col].revealed) return;
+      setGrid(toggleFlag(grid, row, col));
       audioRef.current?.playMove();
       navigator.vibrate?.(15);
     },
     [grid, gameState]
   );
-
-  const handleContextMenu = useCallback(
-    (e: React.MouseEvent, row: number, col: number) => {
-      e.preventDefault();
-      // On Android a long press also fires contextmenu. The long-press timer already flags it.
-      if (touchRef.current) return;
-      handleFlag(row, col);
-    },
-    [handleFlag]
-  );
-
-  const clearTouch = () => {
-    if (touchRef.current?.timer) clearTimeout(touchRef.current.timer);
-    touchRef.current = null;
-  };
-
-  const handleTouchStart = (e: React.TouchEvent, row: number, col: number) => {
-    clearTouch();
-    const touch = e.touches[0];
-    const state: TouchState = { row, col, x: touch.clientX, y: touch.clientY, moved: false, longPressed: false, timer: null };
-    state.timer = setTimeout(() => {
-      state.timer = null;
-      state.longPressed = true;
-      handleFlag(row, col);
-    }, LONG_PRESS_MS);
-    touchRef.current = state;
-  };
-
-  const handleTouchMove = (e: React.TouchEvent) => {
-    const state = touchRef.current;
-    if (!state || state.moved) return;
-    const touch = e.touches[0];
-    if (Math.hypot(touch.clientX - state.x, touch.clientY - state.y) > TAP_SLOP_PX) {
-      // A drag is a pan, not a tap: neither flag nor reveal.
-      state.moved = true;
-      if (state.timer) clearTimeout(state.timer);
-      state.timer = null;
-    }
-  };
-
-  const handleTouchEnd = (e: React.TouchEvent) => {
-    const state = touchRef.current;
-    clearTouch();
-    // Stop the browser's follow-up mouse click, so a tap acts once.
-    e.preventDefault();
-    if (state && !state.moved && !state.longPressed) handleReveal(state.row, state.col);
-  };
-
-  /** Arrows move between cells; Enter or Space reveals (or chords), F flags. */
-  const handleCellKey = (e: React.KeyboardEvent, row: number, col: number) => {
-    const step = ARROWS[e.key];
-    if (step) {
-      e.preventDefault();
-      // Move on the board as drawn, which is turned when `transpose` is set.
-      const [dr, dc] = transpose ? [step[1], step[0]] : step;
-      const r = Math.min(config.rows - 1, Math.max(0, row + dr));
-      const c = Math.min(config.cols - 1, Math.max(0, col + dc));
-      setFocusCell([r, c]);
-      boardAreaRef.current?.querySelector<HTMLElement>(`[data-testid="cell-${r}-${c}"]`)?.focus();
-    } else if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      handleReveal(row, col);
-    } else if (e.key === "f" || e.key === "F") {
-      e.preventDefault();
-      handleFlag(row, col);
-    }
-  };
 
   const changeDifficulty = (d: Difficulty) => {
     setDifficulty(d);
@@ -371,12 +257,7 @@ export default function App() {
               onClick={() => changeDifficulty(d)}
               aria-pressed={difficulty === d}
               className="rounded-md px-3 min-h-[2.75rem] capitalize"
-              style={{
-                border: "1px solid var(--line)",
-                background: difficulty === d ? "var(--accent)" : "var(--panel)",
-                color: difficulty === d ? "#fff" : "var(--ink)",
-                fontWeight: difficulty === d ? 600 : 400,
-              }}
+              style={toggleStyle(difficulty === d)}
             >
               {d}
             </button>
@@ -386,12 +267,7 @@ export default function App() {
             onClick={() => resetGame(difficulty, daily === null)}
             aria-pressed={daily !== null}
             className="rounded-md px-3 min-h-[2.75rem]"
-            style={{
-              border: "1px solid var(--line)",
-              background: daily ? "var(--accent)" : "var(--panel)",
-              color: daily ? "#fff" : "var(--ink)",
-              fontWeight: daily ? 600 : 400,
-            }}
+            style={toggleStyle(daily !== null)}
           >
             📅 Daily
           </button>
@@ -427,68 +303,16 @@ export default function App() {
           style={{ touchAction: "pan-x pan-y" }}
         >
           <div className="flex w-max min-w-full min-h-full" style={{ padding: BOARD_PADDING_PX }}>
-            <div
-              role="grid"
-              aria-label={`${viewRows} by ${viewCols} minefield`}
-              className="m-auto"
-              style={{
-                display: "inline-grid",
-                gridTemplateColumns: `repeat(${viewCols}, ${cellPx}px)`,
-                gridTemplateRows: `repeat(${viewRows}, ${cellPx}px)`,
-                gap: "1px",
-                background: "var(--line)",
-                border: `${BOARD_BORDER_PX}px solid var(--line)`,
-                borderRadius: "4px",
-              }}
-            >
-              {Array.from({ length: viewRows }, (_, vr) => (
-                <div key={vr} role="row" style={{ display: "contents" }}>
-                {Array.from({ length: viewCols }, (_, vc) => {
-                  const r = transpose ? vc : vr;
-                  const c = transpose ? vr : vc;
-                  const cell = grid[r][c];
-                  const face = cellFace(cell, gameState === "lost");
-                  return (
-                    <div
-                      key={`${r}-${c}`}
-                      role="gridcell"
-                      aria-label={face.label}
-                      data-testid={`cell-${r}-${c}`}
-                      tabIndex={r === focusCell[0] && c === focusCell[1] ? 0 : -1}
-                      onFocus={() => setFocusCell([r, c])}
-                      onKeyDown={(e) => handleCellKey(e, r, c)}
-                      onClick={() => handleReveal(r, c)}
-                      onContextMenu={(e) => handleContextMenu(e, r, c)}
-                      onTouchStart={(e) => handleTouchStart(e, r, c)}
-                      onTouchMove={handleTouchMove}
-                      onTouchEnd={handleTouchEnd}
-                      onTouchCancel={clearTouch}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        fontSize: `${Math.round(cellPx * 0.55)}px`,
-                        lineHeight: 1,
-                        fontWeight: 700,
-                        cursor: gameState === "playing" ? "pointer" : "default",
-                        background: cell.exploded
-                          ? "var(--error)"
-                          : cell.revealed
-                            ? "var(--panel)"
-                            : "var(--muted)",
-                        color: cell.revealed && !cell.mine
-                          ? NUMBER_COLORS[cell.adjacentMines] || "var(--ink)"
-                          : "var(--ink)",
-                        transition: "background 0.1s",
-                      }}
-                    >
-                      {face.text}
-                    </div>
-                  );
-                })}
-                </div>
-              ))}
-            </div>
+            <Board
+              key={gameId}
+              grid={grid}
+              cellPx={cellPx}
+              transpose={transpose}
+              playing={gameState === "playing"}
+              lost={gameState === "lost"}
+              onReveal={handleReveal}
+              onFlag={handleFlag}
+            />
           </div>
         </div>
       </div>

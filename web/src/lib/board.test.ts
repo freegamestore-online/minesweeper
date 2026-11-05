@@ -13,6 +13,8 @@ import {
   lossGrid,
   placeMines,
   revealCell,
+  toggleFlag,
+  countFlags,
   type Grid,
 } from "./board";
 
@@ -188,5 +190,16 @@ describe("chord", () => {
     const open = gridWith(3, 3, []);
     open[1][1].revealed = true;
     expect(chord(open, 1, 1)).toBeNull();
+  });
+});
+
+describe("toggleFlag and countFlags", () => {
+  it("flags a cell and unflags it again, without changing the old grid", () => {
+    const grid = createEmptyGrid(3, 3);
+    const flagged = toggleFlag(grid, 1, 2);
+    expect(flagged[1][2].flagged).toBe(true);
+    expect(grid[1][2].flagged).toBe(false);
+    expect(countFlags(flagged)).toBe(1);
+    expect(countFlags(toggleFlag(flagged, 1, 2))).toBe(0);
   });
 });
