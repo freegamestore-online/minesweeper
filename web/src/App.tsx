@@ -1,6 +1,21 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { GameShell, GameTopbar, GameAuth, useGameSounds } from "@freegamestore/games";
 import { useLeaderboard } from '@freegamestore/games';
+import {
+  DIFFICULTIES,
+  boardLayout,
+  createEmptyGrid,
+  hitMine,
+  isWon,
+  lossGrid,
+  placeMines,
+  revealCell,
+  winGrid,
+  type Cell,
+  type Difficulty,
+  type Grid,
+} from "./lib/board";
+import { leaderboardId, timeScore } from "./lib/score";
 
 type SoundsApi = ReturnType<typeof useGameSounds>;
 
@@ -10,140 +25,82 @@ function AudioBridge({ apiRef }: { apiRef: React.MutableRefObject<SoundsApi | nu
   return null;
 }
 
-type Difficulty = "easy" | "medium" | "hard";
-
-interface DifficultyConfig {
-  rows: number;
-  cols: number;
-  mines: number;
-}
-
-const DIFFICULTIES: Record<Difficulty, DifficultyConfig> = {
-  easy: { rows: 9, cols: 9, mines: 10 },
-  medium: { rows: 16, cols: 16, mines: 40 },
-  hard: { rows: 16, cols: 30, mines: 99 },
-};
-
-interface Cell {
-  mine: boolean;
-  revealed: boolean;
-  flagged: boolean;
-  adjacentMines: number;
-}
-
 type GameState = "playing" | "won" | "lost";
 
+/** Mid-tone number colours that read on both the light and the dark panel. */
 const NUMBER_COLORS: Record<number, string> = {
-  1: "#2563eb",
+  1: "#3b82f6",
   2: "#16a34a",
-  3: "#dc2626",
-  4: "#7c3aed",
-  5: "#92400e",
+  3: "#ef4444",
+  4: "#8b5cf6",
+  5: "#d97706",
   6: "#0891b2",
-  7: "#000000",
-  8: "#6b7280",
+  7: "var(--ink)",
+  8: "var(--muted)",
 };
 
-function createEmptyGrid(rows: number, cols: number): Cell[][] {
-  return Array.from({ length: rows }, () =>
-    Array.from({ length: cols }, () => ({
-      mine: false,
-      revealed: false,
-      flagged: false,
-      adjacentMines: 0,
-    }))
-  );
+/** How far a finger can move before a touch counts as a pan rather than a tap. */
+const TAP_SLOP_PX = 10;
+const LONG_PRESS_MS = 450;
+
+/** What a cell shows, and how a screen reader names it. */
+function cellFace(cell: Cell, lost: boolean): { text: string; label: string } {
+  if (cell.exploded) return { text: "💥", label: "Exploded mine" };
+  if (lost && cell.flagged && !cell.mine) return { text: "❌", label: "Wrong flag" };
+  if (cell.flagged) return { text: "🚩", label: "Flag" };
+  if (!cell.revealed) return { text: "", label: "Hidden" };
+  if (cell.mine) return { text: "💣", label: "Mine" };
+  if (cell.adjacentMines > 0) return { text: String(cell.adjacentMines), label: `${cell.adjacentMines} adjacent mines` };
+  return { text: "", label: "Empty" };
 }
 
-function placeMines(
-  grid: Cell[][],
-  rows: number,
-  cols: number,
-  mines: number,
-  safeRow: number,
-  safeCol: number
-): Cell[][] {
-  const newGrid = grid.map((row) => row.map((cell) => ({ ...cell })));
-  let placed = 0;
-  while (placed < mines) {
-    const r = Math.floor(Math.random() * rows);
-    const c = Math.floor(Math.random() * cols);
-    if (
-      !newGrid[r][c].mine &&
-      !(Math.abs(r - safeRow) <= 1 && Math.abs(c - safeCol) <= 1)
-    ) {
-      newGrid[r][c].mine = true;
-      placed++;
-    }
-  }
-  // Calculate adjacent mines
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      if (newGrid[r][c].mine) continue;
-      let count = 0;
-      for (let dr = -1; dr <= 1; dr++) {
-        for (let dc = -1; dc <= 1; dc++) {
-          const nr = r + dr;
-          const nc = c + dc;
-          if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && newGrid[nr][nc].mine) {
-            count++;
-          }
-        }
-      }
-      newGrid[r][c].adjacentMines = count;
-    }
-  }
-  return newGrid;
-}
-
-function revealCell(
-  grid: Cell[][],
-  rows: number,
-  cols: number,
-  row: number,
-  col: number
-): Cell[][] {
-  const newGrid = grid.map((r) => r.map((c) => ({ ...c })));
-  const stack: [number, number][] = [[row, col]];
-  while (stack.length > 0) {
-    const [r, c] = stack.pop()!;
-    if (r < 0 || r >= rows || c < 0 || c >= cols) continue;
-    if (newGrid[r][c].revealed || newGrid[r][c].flagged) continue;
-    newGrid[r][c].revealed = true;
-    if (newGrid[r][c].adjacentMines === 0 && !newGrid[r][c].mine) {
-      for (let dr = -1; dr <= 1; dr++) {
-        for (let dc = -1; dc <= 1; dc++) {
-          if (dr === 0 && dc === 0) continue;
-          stack.push([r + dr, c + dc]);
-        }
-      }
-    }
-  }
-  return newGrid;
+interface TouchState {
+  row: number;
+  col: number;
+  x: number;
+  y: number;
+  moved: boolean;
+  longPressed: boolean;
+  timer: ReturnType<typeof setTimeout> | null;
 }
 
 export default function App() {
   const [difficulty, setDifficulty] = useState<Difficulty>("easy");
-  const [grid, setGrid] = useState<Cell[][]>(() =>
+  const [grid, setGrid] = useState<Grid>(() =>
     createEmptyGrid(DIFFICULTIES.easy.rows, DIFFICULTIES.easy.cols)
   );
   const [gameState, setGameState] = useState<GameState>("playing");
   const [firstClick, setFirstClick] = useState(true);
   const [time, setTime] = useState(0);
   const [timerRunning, setTimerRunning] = useState(false);
+  const [area, setArea] = useState({ width: 0, height: 0 });
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const longPressTriggered = useRef(false);
-  const { submitScore } = useLeaderboard("minesweeper");
+  const touchRef = useRef<TouchState | null>(null);
+  const boardAreaRef = useRef<HTMLDivElement>(null);
+  const { submitScore } = useLeaderboard(leaderboardId(difficulty));
   const submittedRef = useRef(false);
   const audioRef = useRef<SoundsApi | null>(null);
 
   const config = DIFFICULTIES[difficulty];
+  const { cellPx, transpose } = boardLayout(area.width, area.height, config.rows, config.cols);
+  // A turned board is drawn column by column; play still uses the grid's own coordinates.
+  const viewRows = transpose ? config.cols : config.rows;
+  const viewCols = transpose ? config.rows : config.cols;
 
   const flagCount = grid.reduce(
     (acc, row) => acc + row.reduce((a, cell) => a + (cell.flagged ? 1 : 0), 0),
     0
   );
+
+  useEffect(() => {
+    const el = boardAreaRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(([entry]) => {
+      setArea({ width: entry.contentRect.width, height: entry.contentRect.height });
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     if (timerRunning) {
@@ -156,11 +113,11 @@ export default function App() {
     };
   }, [timerRunning]);
 
-  // Submit time on win
+  // Submit time on win. The board ranks higher scores first, so the time is inverted.
   useEffect(() => {
     if (gameState === "won" && !submittedRef.current) {
       submittedRef.current = true;
-      submitScore(time);
+      submitScore(timeScore(time));
     }
     if (gameState === "playing") {
       submittedRef.current = false;
@@ -181,17 +138,26 @@ export default function App() {
     [difficulty]
   );
 
-  const checkWin = useCallback(
-    (g: Cell[][]) => {
-      for (let r = 0; r < config.rows; r++) {
-        for (let c = 0; c < config.cols; c++) {
-          if (!g[r][c].mine && !g[r][c].revealed) return false;
-        }
-      }
-      return true;
-    },
-    [config]
-  );
+  /** Show the result of a reveal: a loss, a win, or the opened cells. */
+  const settle = useCallback((next: Grid) => {
+    if (hitMine(next)) {
+      setGrid(lossGrid(next));
+      setGameState("lost");
+      setTimerRunning(false);
+      audioRef.current?.playError();
+      navigator.vibrate?.([60, 80, 120]);
+      return;
+    }
+    audioRef.current?.playTick();
+    if (isWon(next)) {
+      setGrid(winGrid(next));
+      setGameState("won");
+      setTimerRunning(false);
+      audioRef.current?.playLevelUp();
+      return;
+    }
+    setGrid(next);
+  }, []);
 
   const handleReveal = useCallback(
     (row: number, col: number) => {
@@ -201,33 +167,13 @@ export default function App() {
 
       let currentGrid = grid;
       if (firstClick) {
-        currentGrid = placeMines(grid, config.rows, config.cols, config.mines, row, col);
+        currentGrid = placeMines(grid, config.mines, row, col);
         setFirstClick(false);
         setTimerRunning(true);
       }
-
-      if (currentGrid[row][col].mine) {
-        // Reveal all mines
-        const lostGrid = currentGrid.map((r) =>
-          r.map((c) => (c.mine ? { ...c, revealed: true } : c))
-        );
-        setGrid(lostGrid);
-        setGameState("lost");
-        setTimerRunning(false);
-        audioRef.current?.playError();
-        return;
-      }
-
-      audioRef.current?.playTick();
-      const newGrid = revealCell(currentGrid, config.rows, config.cols, row, col);
-      setGrid(newGrid);
-      if (checkWin(newGrid)) {
-        setGameState("won");
-        setTimerRunning(false);
-        audioRef.current?.playLevelUp();
-      }
+      settle(revealCell(currentGrid, row, col));
     },
-    [grid, gameState, firstClick, config, checkWin]
+    [grid, gameState, firstClick, config, settle]
   );
 
   const handleFlag = useCallback(
@@ -239,6 +185,7 @@ export default function App() {
       newGrid[row][col].flagged = !newGrid[row][col].flagged;
       setGrid(newGrid);
       audioRef.current?.playMove();
+      navigator.vibrate?.(15);
     },
     [grid, gameState]
   );
@@ -246,51 +193,57 @@ export default function App() {
   const handleContextMenu = useCallback(
     (e: React.MouseEvent, row: number, col: number) => {
       e.preventDefault();
+      // On Android a long press also fires contextmenu. The long-press timer already flags it.
+      if (touchRef.current) return;
       handleFlag(row, col);
     },
     [handleFlag]
   );
 
-  const handleTouchStart = useCallback(
-    (row: number, col: number) => {
-      longPressTriggered.current = false;
-      longPressRef.current = setTimeout(() => {
-        longPressTriggered.current = true;
-        handleFlag(row, col);
-      }, 500);
-    },
-    [handleFlag]
-  );
+  const clearTouch = () => {
+    if (touchRef.current?.timer) clearTimeout(touchRef.current.timer);
+    touchRef.current = null;
+  };
 
-  const handleTouchEnd = useCallback(
-    (row: number, col: number) => {
-      if (longPressRef.current) {
-        clearTimeout(longPressRef.current);
-        longPressRef.current = null;
-      }
-      if (!longPressTriggered.current) {
-        handleReveal(row, col);
-      }
-    },
-    [handleReveal]
-  );
+  const handleTouchStart = (e: React.TouchEvent, row: number, col: number) => {
+    clearTouch();
+    const touch = e.touches[0];
+    const state: TouchState = { row, col, x: touch.clientX, y: touch.clientY, moved: false, longPressed: false, timer: null };
+    state.timer = setTimeout(() => {
+      state.timer = null;
+      state.longPressed = true;
+      handleFlag(row, col);
+    }, LONG_PRESS_MS);
+    touchRef.current = state;
+  };
 
-  const handleTouchMove = useCallback(() => {
-    if (longPressRef.current) {
-      clearTimeout(longPressRef.current);
-      longPressRef.current = null;
+  const handleTouchMove = (e: React.TouchEvent) => {
+    const state = touchRef.current;
+    if (!state || state.moved) return;
+    const touch = e.touches[0];
+    if (Math.hypot(touch.clientX - state.x, touch.clientY - state.y) > TAP_SLOP_PX) {
+      // A drag is a pan, not a tap: neither flag nor reveal.
+      state.moved = true;
+      if (state.timer) clearTimeout(state.timer);
+      state.timer = null;
     }
-  }, []);
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    const state = touchRef.current;
+    clearTouch();
+    // Stop the browser's follow-up mouse click, so a tap acts once.
+    e.preventDefault();
+    if (state && !state.moved && !state.longPressed) handleReveal(state.row, state.col);
+  };
 
   const changeDifficulty = (d: Difficulty) => {
     setDifficulty(d);
     resetGame(d);
   };
 
-  const cellSize = difficulty === "hard" ? "clamp(18px, 4vw, 28px)" : "clamp(24px, 6vw, 36px)";
-
   const statusLabel =
-    gameState === "won" ? "You Win!" : gameState === "lost" ? "Game Over" : "";
+    gameState === "won" ? `You win! ${time}s` : gameState === "lost" ? "Boom! Game over" : "";
 
   return (
     <GameShell
@@ -307,12 +260,14 @@ export default function App() {
               <p>Clear the board without hitting a mine.</p>
               <h4 style={{marginTop:'0.75rem',fontWeight:600}}>Controls</h4>
               <ul style={{paddingLeft:'1.2rem',marginTop:'0.25rem'}}>
-                <li>Left click to reveal a cell</li>
+                <li>Click or tap to reveal a cell</li>
                 <li>Right click or long press to flag</li>
+                <li>Drag to move around a large board</li>
               </ul>
               <h4 style={{marginTop:'0.75rem',fontWeight:600}}>Rules</h4>
               <ul style={{paddingLeft:'1.2rem',marginTop:'0.25rem'}}>
                 <li>Numbers show adjacent mines</li>
+                <li>Your first reveal is never a mine</li>
                 <li>Reveal all non-mine cells to win</li>
                 <li>Three difficulties: Easy, Medium, Hard</li>
               </ul>
@@ -323,119 +278,109 @@ export default function App() {
       }
     >
       <AudioBridge apiRef={audioRef} />
-      <div className="relative w-full h-full" style={{ overflowY: "auto" }}>
-        <div style={{ maxWidth: "100%", padding: "0.75rem" }}>
-          {/* Difficulty Selector */}
-          <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem", flexWrap: "wrap" }}>
-            {(["easy", "medium", "hard"] as Difficulty[]).map((d) => (
-              <button
-                key={d}
-                onClick={() => changeDifficulty(d)}
-                style={{
-                  padding: "0.4rem 0.8rem",
-                  minHeight: "2.75rem",
-                  borderRadius: "6px",
-                  border: "1px solid var(--line)",
-                  background: difficulty === d ? "var(--accent)" : "var(--panel)",
-                  color: difficulty === d ? "#fff" : "var(--ink)",
-                  cursor: "pointer",
-                  fontWeight: difficulty === d ? 600 : 400,
-                  textTransform: "capitalize",
-                }}
-              >
-                {d}
-              </button>
-            ))}
-          </div>
-
-          {/* Status + Reset */}
+      <div className="flex flex-col w-full h-full">
+        <div className="flex flex-wrap items-center gap-2 px-3 pt-3 pb-2">
+          {(["easy", "medium", "hard"] as Difficulty[]).map((d) => (
+            <button
+              key={d}
+              onClick={() => changeDifficulty(d)}
+              aria-pressed={difficulty === d}
+              className="rounded-md px-3 min-h-[2.75rem] capitalize"
+              style={{
+                border: "1px solid var(--line)",
+                background: difficulty === d ? "var(--accent)" : "var(--panel)",
+                color: difficulty === d ? "#fff" : "var(--ink)",
+                fontWeight: difficulty === d ? 600 : 400,
+              }}
+            >
+              {d}
+            </button>
+          ))}
           {statusLabel && (
-            <div style={{ textAlign: "center", marginBottom: "0.75rem" }}>
+            <>
               <span
-                style={{
-                  fontWeight: 600,
-                  color: gameState === "won" ? "var(--success)" : "var(--error)",
-                }}
+                role="status"
+                className="font-semibold"
+                style={{ color: gameState === "won" ? "var(--success)" : "var(--error)" }}
               >
                 {statusLabel}
               </span>
-              <div style={{ marginTop: "0.5rem" }}>
-                <button
-                  onClick={() => resetGame()}
-                  style={{
-                    padding: "0.4rem 1rem",
-                    minHeight: "2.75rem",
-                    borderRadius: "6px",
-                    border: "1px solid var(--line)",
-                    background: "var(--accent)",
-                    color: "#fff",
-                    cursor: "pointer",
-                    fontWeight: 600,
-                  }}
-                >
-                  Play Again
-                </button>
-              </div>
-            </div>
+              <button
+                onClick={() => resetGame()}
+                className="rounded-md px-4 min-h-[2.75rem] font-semibold"
+                style={{ border: "1px solid var(--line)", background: "var(--accent)", color: "#fff" }}
+              >
+                Play Again
+              </button>
+            </>
           )}
+        </div>
 
-          {/* Grid */}
-          <div
-            style={{
-              display: "inline-grid",
-              gridTemplateColumns: `repeat(${config.cols}, ${cellSize})`,
-              gridTemplateRows: `repeat(${config.rows}, ${cellSize})`,
-              gap: "1px",
-              background: "var(--line)",
-              border: "2px solid var(--line)",
-              borderRadius: "4px",
-              userSelect: "none",
-              touchAction: "manipulation",
-            }}
-          >
-            {grid.map((row, r) =>
-              row.map((cell, c) => (
-                <div
-                  key={`${r}-${c}`}
-                  onClick={() => {
-                    if (!cell.flagged) handleReveal(r, c);
-                  }}
-                  onContextMenu={(e) => handleContextMenu(e, r, c)}
-                  onTouchStart={(e) => {
-                    e.preventDefault();
-                    handleTouchStart(r, c);
-                  }}
-                  onTouchEnd={(e) => {
-                    e.preventDefault();
-                    handleTouchEnd(r, c);
-                  }}
-                  onTouchMove={handleTouchMove}
-                  style={{
-                    width: cellSize,
-                    height: cellSize,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: difficulty === "hard" ? "clamp(10px, 2.5vw, 14px)" : "clamp(12px, 3vw, 16px)",
-                    fontWeight: 700,
-                    cursor: gameState === "playing" ? "pointer" : "default",
-                    background: cell.revealed
-                      ? cell.mine
-                        ? "var(--error)"
-                        : "var(--panel)"
-                      : "var(--muted)",
-                    color: cell.revealed && !cell.mine
-                      ? NUMBER_COLORS[cell.adjacentMines] || "var(--ink)"
-                      : "var(--ink)",
-                    transition: "background 0.1s",
-                  }}
-                >
-                  {cell.revealed && cell.mine && "X"}
-                  {cell.revealed && !cell.mine && cell.adjacentMines > 0 && cell.adjacentMines}
-                  {!cell.revealed && cell.flagged && "F"}
-                </div>
-              ))
-            )}
+        {/* The board area pans when the board is wider or taller than the screen. */}
+        <div
+          ref={boardAreaRef}
+          data-testid="board-area"
+          className="flex-1 min-h-0 overflow-auto"
+          style={{ touchAction: "pan-x pan-y" }}
+        >
+          <div className="flex w-max min-w-full min-h-full p-2">
+            <div
+              role="grid"
+              aria-label={`${viewRows} by ${viewCols} minefield`}
+              className="m-auto"
+              style={{
+                display: "inline-grid",
+                gridTemplateColumns: `repeat(${viewCols}, ${cellPx}px)`,
+                gridTemplateRows: `repeat(${viewRows}, ${cellPx}px)`,
+                gap: "1px",
+                background: "var(--line)",
+                border: "2px solid var(--line)",
+                borderRadius: "4px",
+              }}
+            >
+              {Array.from({ length: viewRows }, (_, vr) =>
+                Array.from({ length: viewCols }, (_, vc) => {
+                  const r = transpose ? vc : vr;
+                  const c = transpose ? vr : vc;
+                  const cell = grid[r][c];
+                  const face = cellFace(cell, gameState === "lost");
+                  return (
+                    <div
+                      key={`${r}-${c}`}
+                      role="gridcell"
+                      aria-label={face.label}
+                      data-testid={`cell-${r}-${c}`}
+                      onClick={() => handleReveal(r, c)}
+                      onContextMenu={(e) => handleContextMenu(e, r, c)}
+                      onTouchStart={(e) => handleTouchStart(e, r, c)}
+                      onTouchMove={handleTouchMove}
+                      onTouchEnd={handleTouchEnd}
+                      onTouchCancel={clearTouch}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: `${Math.round(cellPx * 0.55)}px`,
+                        lineHeight: 1,
+                        fontWeight: 700,
+                        cursor: gameState === "playing" ? "pointer" : "default",
+                        background: cell.exploded
+                          ? "var(--error)"
+                          : cell.revealed
+                            ? "var(--panel)"
+                            : "var(--muted)",
+                        color: cell.revealed && !cell.mine
+                          ? NUMBER_COLORS[cell.adjacentMines] || "var(--ink)"
+                          : "var(--ink)",
+                        transition: "background 0.1s",
+                      }}
+                    >
+                      {face.text}
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>
         </div>
       </div>
