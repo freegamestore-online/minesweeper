@@ -12,3 +12,8 @@ export function timeScore(seconds: number): number {
 export function leaderboardId(difficulty: Difficulty): string {
   return `minesweeper-${difficulty}`;
 }
+
+/** One daily board per difficulty. */
+export function dailyLeaderboardId(difficulty: Difficulty): string {
+  return `minesweeper-daily-${difficulty}`;
+}

@@ -4,6 +4,7 @@ import { useLeaderboard } from '@freegamestore/games';
 import {
   DIFFICULTIES,
   boardLayout,
+  chord,
   createEmptyGrid,
   hitMine,
   isWon,
@@ -15,7 +16,20 @@ import {
   type Difficulty,
   type Grid,
 } from "./lib/board";
-import { leaderboardId, timeScore } from "./lib/score";
+import { dailyLeaderboardId, leaderboardId, timeScore } from "./lib/score";
+import { dailyGrid, dateKey } from "./lib/daily";
+import {
+  STATS_KEY,
+  dailyResult,
+  isFirstDailyWin,
+  loadStats,
+  modeStats,
+  recordDailyStart,
+  recordDailyWin,
+  recordStart,
+  recordWin,
+  winRate,
+} from "./lib/stats";
 
 type SoundsApi = ReturnType<typeof useGameSounds>;
 
@@ -70,7 +84,12 @@ export default function App() {
     createEmptyGrid(DIFFICULTIES.easy.rows, DIFFICULTIES.easy.cols)
   );
   const [gameState, setGameState] = useState<GameState>("playing");
-  const [firstClick, setFirstClick] = useState(true);
+  /** False until the player first opens a cell; the timer and stats start then. */
+  const [started, setStarted] = useState(false);
+  /** The UTC date of the daily board being played, or null for a random board. Captured at start, so midnight doesn't change it. */
+  const [daily, setDaily] = useState<string | null>(null);
+  const [stats, setStats] = useState(() => loadStats(localStorage.getItem(STATS_KEY)));
+  const [newBest, setNewBest] = useState(false);
   const [time, setTime] = useState(0);
   const [timerRunning, setTimerRunning] = useState(false);
   const [area, setArea] = useState({ width: 0, height: 0 });
@@ -78,6 +97,7 @@ export default function App() {
   const touchRef = useRef<TouchState | null>(null);
   const boardAreaRef = useRef<HTMLDivElement>(null);
   const { submitScore } = useLeaderboard(leaderboardId(difficulty));
+  const { submitScore: submitDailyScore } = useLeaderboard(dailyLeaderboardId(difficulty));
   const submittedRef = useRef(false);
   const audioRef = useRef<SoundsApi | null>(null);
 
@@ -113,29 +133,45 @@ export default function App() {
     };
   }, [timerRunning]);
 
-  // Submit time on win. The board ranks higher scores first, so the time is inverted.
+  useEffect(() => {
+    localStorage.setItem(STATS_KEY, JSON.stringify(stats));
+  }, [stats]);
+
+  // Record a win and submit its time. Leaderboards rank higher scores first, so the time is inverted.
+  // A daily board goes to its own leaderboard, and only when the first attempt that day is won.
   useEffect(() => {
     if (gameState === "won" && !submittedRef.current) {
       submittedRef.current = true;
-      submitScore(timeScore(time));
+      if (daily) {
+        if (isFirstDailyWin(dailyResult(stats, daily, difficulty))) submitDailyScore(timeScore(time));
+        setStats((s) => recordDailyWin(s, daily, difficulty, time));
+      } else {
+        const best = modeStats(stats, difficulty).bestSeconds;
+        setNewBest(best === null || time < best);
+        setStats((s) => recordWin(s, difficulty, time));
+        submitScore(timeScore(time));
+      }
     }
     if (gameState === "playing") {
       submittedRef.current = false;
     }
-  }, [gameState, time, submitScore]);
+  }, [gameState, time, submitScore, submitDailyScore, daily, difficulty, stats]);
 
+  /** Start a new game: today's daily board when `dailyBoard` is set, otherwise an empty random one. */
   const resetGame = useCallback(
-    (diff?: Difficulty) => {
-      const d = diff || difficulty;
-      const c = DIFFICULTIES[d];
-      setGrid(createEmptyGrid(c.rows, c.cols));
+    (diff: Difficulty = difficulty, dailyBoard = daily !== null) => {
+      const c = DIFFICULTIES[diff];
+      const date = dailyBoard ? dateKey() : null;
+      setDaily(date);
+      setGrid(date ? dailyGrid(diff, date) : createEmptyGrid(c.rows, c.cols));
       setGameState("playing");
-      setFirstClick(true);
+      setStarted(false);
+      setNewBest(false);
       setTime(0);
       setTimerRunning(false);
       if (timerRef.current) clearInterval(timerRef.current);
     },
-    [difficulty]
+    [difficulty, daily]
   );
 
   /** Show the result of a reveal: a loss, a win, or the opened cells. */
@@ -159,21 +195,26 @@ export default function App() {
     setGrid(next);
   }, []);
 
+  /** A tap on a hidden cell opens it; a tap on a number chords. */
   const handleReveal = useCallback(
     (row: number, col: number) => {
       if (gameState !== "playing") return;
       const cell = grid[row][col];
-      if (cell.flagged || cell.revealed) return;
+      if (cell.flagged) return;
+      const next = cell.revealed ? chord(grid, row, col) : null;
+      if (cell.revealed && !next) return;
 
       let currentGrid = grid;
-      if (firstClick) {
-        currentGrid = placeMines(grid, config.mines, row, col);
-        setFirstClick(false);
+      if (!started) {
+        // A random board's mines are placed now, away from the first cell. A daily board already has them.
+        if (!daily) currentGrid = placeMines(grid, config.mines, row, col);
+        setStarted(true);
         setTimerRunning(true);
+        setStats((s) => (daily ? recordDailyStart(s, daily, difficulty) : recordStart(s, difficulty)));
       }
-      settle(revealCell(currentGrid, row, col));
+      settle(next ?? revealCell(currentGrid, row, col));
     },
-    [grid, gameState, firstClick, config, settle]
+    [grid, gameState, started, daily, difficulty, config, settle]
   );
 
   const handleFlag = useCallback(
@@ -243,7 +284,13 @@ export default function App() {
   };
 
   const statusLabel =
-    gameState === "won" ? `You win! ${time}s` : gameState === "lost" ? "Boom! Game over" : "";
+    gameState === "won" ? `You win! ${time}s${newBest ? " · New best" : ""}` : gameState === "lost" ? "Boom! Game over" : "";
+
+  const mode = modeStats(stats, difficulty);
+  const today = daily ? dailyResult(stats, daily, difficulty) : null;
+  const statsLine = daily
+    ? `Daily ${daily} (UTC) · ${today?.won ? `Solved in ${today.seconds}s` : "Not solved yet"}${(today?.attempts ?? 0) > 1 ? " · Only the first try is ranked" : ""}`
+    : `Played ${mode.played} · Won ${mode.won} (${winRate(mode)}%)${mode.bestSeconds !== null ? ` · Best ${mode.bestSeconds}s` : ""}`;
 
   return (
     <GameShell
@@ -262,6 +309,7 @@ export default function App() {
               <ul style={{paddingLeft:'1.2rem',marginTop:'0.25rem'}}>
                 <li>Click or tap to reveal a cell</li>
                 <li>Right click or long press to flag</li>
+                <li>Tap a number with all its mines flagged to open its other neighbours</li>
                 <li>Drag to move around a large board</li>
               </ul>
               <h4 style={{marginTop:'0.75rem',fontWeight:600}}>Rules</h4>
@@ -270,6 +318,7 @@ export default function App() {
                 <li>Your first reveal is never a mine</li>
                 <li>Reveal all non-mine cells to win</li>
                 <li>Three difficulties: Easy, Medium, Hard</li>
+                <li>Daily is the same board for everyone on a UTC day, with a safe start already open. Only your first try goes to the daily leaderboard</li>
               </ul>
             </div>
           }
@@ -282,6 +331,7 @@ export default function App() {
         <div className="flex flex-wrap items-center gap-2 px-3 pt-3 pb-2">
           {(["easy", "medium", "hard"] as Difficulty[]).map((d) => (
             <button
+              type="button"
               key={d}
               onClick={() => changeDifficulty(d)}
               aria-pressed={difficulty === d}
@@ -296,6 +346,20 @@ export default function App() {
               {d}
             </button>
           ))}
+          <button
+            type="button"
+            onClick={() => resetGame(difficulty, daily === null)}
+            aria-pressed={daily !== null}
+            className="rounded-md px-3 min-h-[2.75rem]"
+            style={{
+              border: "1px solid var(--line)",
+              background: daily ? "var(--accent)" : "var(--panel)",
+              color: daily ? "#fff" : "var(--ink)",
+              fontWeight: daily ? 600 : 400,
+            }}
+          >
+            📅 Daily
+          </button>
           {statusLabel && (
             <>
               <span
@@ -306,6 +370,7 @@ export default function App() {
                 {statusLabel}
               </span>
               <button
+                type="button"
                 onClick={() => resetGame()}
                 className="rounded-md px-4 min-h-[2.75rem] font-semibold"
                 style={{ border: "1px solid var(--line)", background: "var(--accent)", color: "#fff" }}
@@ -315,6 +380,9 @@ export default function App() {
             </>
           )}
         </div>
+        <p data-testid="stats" className="px-3 pb-1 text-xs font-semibold" style={{ color: "var(--muted)" }}>
+          {statsLine}
+        </p>
 
         {/* The board area pans when the board is wider or taller than the screen. */}
         <div

@@ -150,3 +150,18 @@ export function boardLayout(width: number, height: number, rows: number, cols: n
   const fit = transpose ? turned : upright;
   return { cellPx: Math.min(MAX_CELL_PX, Math.max(MIN_CELL_PX, fit)), transpose };
 }
+
+/**
+ * Chording: on a revealed number with exactly that many flags around it, open every
+ * other hidden neighbour. Returns null when the cell can't be chorded. A wrong flag
+ * means a mine is opened, which loses the game as usual.
+ */
+export function chord(grid: Grid, row: number, col: number): Grid | null {
+  const cell = grid[row][col];
+  if (!cell.revealed || cell.mine || cell.adjacentMines === 0) return null;
+  const around = neighbours(grid.length, grid[0].length, row, col);
+  const flags = around.filter(([r, c]) => grid[r][c].flagged).length;
+  const hidden = around.filter(([r, c]) => !grid[r][c].flagged && !grid[r][c].revealed);
+  if (flags !== cell.adjacentMines || hidden.length === 0) return null;
+  return hidden.reduce((next, [r, c]) => revealCell(next, r, c), grid);
+}

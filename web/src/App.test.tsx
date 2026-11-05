@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const submitScore = vi.fn(() => Promise.resolve({ ok: true }));
+const submitted: [string, number][] = [];
 const leaderboardIds: string[] = [];
 
 vi.mock("@freegamestore/games", async (importOriginal) => {
@@ -10,23 +10,43 @@ vi.mock("@freegamestore/games", async (importOriginal) => {
     ...actual,
     useLeaderboard: (id: string) => {
       leaderboardIds.push(id);
+      const submitScore = async (score: number) => {
+        submitted.push([id, score]);
+        return { ok: true };
+      };
       return { topScores: [], recentScores: [], submitScore, loading: false, refresh: () => {} };
     },
   };
 });
 
 import App from "./App";
+import { DIFFICULTIES, createEmptyGrid, placeMines, type Grid } from "./lib/board";
+import { dailyGrid } from "./lib/daily";
+import { TIME_SCORE_BASE } from "./lib/score";
 
 const cell = (r: number, c: number) => screen.getByTestId(`cell-${r}-${c}`);
 const at = (x: number, y: number) => ({ touches: [{ clientX: x, clientY: y }], changedTouches: [{ clientX: x, clientY: y }] });
 
 beforeEach(() => {
   vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-11-05T12:00:00Z"));
   localStorage.clear();
+  submitted.length = 0;
 });
+
+/** Click every safe hidden cell of a known board. */
+function clearBoard(grid: Grid) {
+  grid.forEach((row, r) => {
+    row.forEach((c, col) => {
+      if (!c.mine && cell(r, col).getAttribute("aria-label") === "Hidden") fireEvent.click(cell(r, col));
+    });
+  });
+}
+
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe("touch input", () => {
@@ -68,5 +88,78 @@ describe("leaderboard", () => {
     expect(leaderboardIds).toContain("minesweeper-easy");
     expect(leaderboardIds).toContain("minesweeper-hard");
     expect(leaderboardIds).not.toContain("minesweeper");
+  });
+});
+
+describe("winning a random game", () => {
+  it("submits the inverted time to the difficulty's board and records stats", () => {
+    // Make the board predictable: the same sequence for the app and for this test.
+    const sequence = () => {
+      let x = 0.37;
+      return () => (x = (x * 7919 + 0.1234) % 1);
+    };
+    const app = sequence();
+    vi.spyOn(Math, "random").mockImplementation(app);
+    render(<App />);
+    fireEvent.click(cell(4, 4));
+    act(() => vi.advanceTimersByTime(3000));
+    const board = placeMines(createEmptyGrid(9, 9), DIFFICULTIES.easy.mines, 4, 4, sequence());
+    clearBoard(board);
+    expect(screen.getByRole("status")).toHaveTextContent("You win! 3s · New best");
+    expect(submitted).toEqual([["minesweeper-easy", TIME_SCORE_BASE - 3]]);
+    expect(screen.getByTestId("stats")).toHaveTextContent("Played 1 · Won 1 (100%) · Best 3s");
+  });
+});
+
+describe("daily board", () => {
+  it("is today's seeded board with its safe opening shown, and ranks only the first try", () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /daily/i }));
+    const board = dailyGrid("easy", "2026-11-05");
+    board.forEach((row, r) => {
+      row.forEach((c, col) => {
+        expect(cell(r, col).getAttribute("aria-label") === "Hidden").toBe(!c.revealed);
+      });
+    });
+    expect(screen.getByTestId("stats")).toHaveTextContent("Daily 2026-11-05 (UTC) · Not solved yet");
+
+    act(() => vi.advanceTimersByTime(1000)); // the timer waits for the first move
+    clearBoard(board);
+    act(() => vi.advanceTimersByTime(0));
+    expect(submitted).toEqual([["minesweeper-daily-easy", TIME_SCORE_BASE - 0]]);
+    expect(screen.getByTestId("stats")).toHaveTextContent("Solved in 0s");
+
+    // Playing it again doesn't post again.
+    fireEvent.click(screen.getByRole("button", { name: "Play Again" }));
+    clearBoard(board);
+    expect(submitted).toHaveLength(1);
+    expect(screen.getByTestId("stats")).toHaveTextContent("Only the first try is ranked");
+  });
+});
+
+describe("chording in the app", () => {
+  it("a tap on a satisfied number opens its neighbours", () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /daily/i }));
+    const board = dailyGrid("easy", "2026-11-05");
+    // Find an opened number whose hidden neighbours include a mine and a safe cell.
+    for (let r = 0; r < 9; r++) {
+      for (let c = 0; c < 9; c++) {
+        const n = board[r][c];
+        if (!n.revealed || n.adjacentMines === 0) continue;
+        const around: [number, number][] = [];
+        for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+          if ((dr || dc) && board[r + dr]?.[c + dc] && !board[r + dr][c + dc].revealed) around.push([r + dr, c + dc]);
+        }
+        const mines = around.filter(([a, b]) => board[a][b].mine);
+        const safe = around.filter(([a, b]) => !board[a][b].mine);
+        if (mines.length !== n.adjacentMines || safe.length === 0) continue;
+        for (const [a, b] of mines) fireEvent.contextMenu(cell(a, b));
+        fireEvent.click(cell(r, c));
+        for (const [a, b] of safe) expect(cell(a, b)).not.toHaveAttribute("aria-label", "Hidden");
+        return;
+      }
+    }
+    throw new Error("no chordable number on this daily board");
   });
 });

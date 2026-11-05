@@ -10,5 +10,7 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: "./src/test/setup.ts",
+    // The App tests play whole boards through the DOM, which is slow on a busy CI machine.
+    testTimeout: 30_000,
   },
 });

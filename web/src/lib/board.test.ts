@@ -4,6 +4,7 @@ import {
   MAX_CELL_PX,
   MIN_CELL_PX,
   boardLayout,
+  chord,
   createEmptyGrid,
   hitMine,
   isWon,
@@ -135,5 +136,47 @@ describe("boardLayout", () => {
 
   it("caps the size on a large screen", () => {
     expect(boardLayout(2000, 2000, 9, 9).cellPx).toBe(MAX_CELL_PX);
+  });
+});
+
+describe("chord", () => {
+  // Mine at the top-left; the cell below-right of it shows 1.
+  const setup = () => {
+    const grid = gridWith(3, 3, [[0, 0]]);
+    grid[1][1].revealed = true;
+    return grid;
+  };
+
+  it("opens the other neighbours of a number whose mines are all flagged", () => {
+    const grid = setup();
+    grid[0][0].flagged = true;
+    const next = chord(grid, 1, 1)!;
+    expect(next).not.toBeNull();
+    expect(hitMine(next)).toBe(false);
+    expect(isWon(next)).toBe(true);
+    expect(next[0][0]).toMatchObject({ flagged: true, revealed: false });
+  });
+
+  it("does nothing until the flags match the number", () => {
+    expect(chord(setup(), 1, 1)).toBeNull();
+    const twoFlags = setup();
+    twoFlags[0][0].flagged = true;
+    twoFlags[0][1].flagged = true;
+    expect(chord(twoFlags, 1, 1)).toBeNull();
+  });
+
+  it("opens the mine when a flag is wrong, so the game is lost", () => {
+    const grid = setup();
+    grid[2][2].flagged = true; // wrong flag
+    const next = chord(grid, 1, 1)!;
+    expect(hitMine(next)).toBe(true);
+  });
+
+  it("does nothing on a hidden cell, an empty cell or a fully open neighbourhood", () => {
+    const grid = setup();
+    expect(chord(grid, 2, 2)).toBeNull();
+    const open = gridWith(3, 3, []);
+    open[1][1].revealed = true;
+    expect(chord(open, 1, 1)).toBeNull();
   });
 });
